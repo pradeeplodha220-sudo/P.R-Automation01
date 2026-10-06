@@ -164,8 +164,13 @@ fun RedAutomationMainScreen() {
     LaunchedEffect(Unit) {
         com.example.engine.RootEngine.detectRoot { granted ->
             if (granted) {
-                // Grant overlay permission via root so HUD works without prompts, but DO NOT touch accessibility!
+                // Ensure accessibility service is completely OFF in root mode
+                com.example.engine.RootEngine.disableAccessibilityServiceViaRoot(context)
+                // Grant overlay permission via root so HUD works without prompts
                 com.example.engine.RootEngine.executeSu("appops set ${context.packageName} SYSTEM_ALERT_WINDOW allow")
+            } else {
+                // Non-root mode: ensure accessibility service component is enabled
+                com.example.engine.RootEngine.enableAccessibilityServiceForNonRoot(context)
             }
         }
         val pm = context.packageManager

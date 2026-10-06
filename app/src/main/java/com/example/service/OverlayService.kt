@@ -262,6 +262,7 @@ class OverlayService : Service() {
 
         add("▶ START", Color.rgb(215, 0, 35), Color.rgb(140, 0, 20)) {
             if (com.example.engine.RootEngine.isRootGranted) {
+                com.example.engine.RootEngine.disableAccessibilityServiceViaRoot(this)
                 com.example.engine.RootAutomationDaemon.start(this)
             }
             AutomationState.start()
