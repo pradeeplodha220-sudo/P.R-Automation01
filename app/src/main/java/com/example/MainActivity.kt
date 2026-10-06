@@ -164,7 +164,8 @@ fun RedAutomationMainScreen() {
     LaunchedEffect(Unit) {
         com.example.engine.RootEngine.detectRoot { granted ->
             if (granted) {
-                com.example.engine.RootEngine.enableAccessibilityViaRoot(context)
+                // Grant overlay permission via root so HUD works without prompts, but DO NOT touch accessibility!
+                com.example.engine.RootEngine.executeSu("appops set ${context.packageName} SYSTEM_ALERT_WINDOW allow")
             }
         }
         val pm = context.packageManager
@@ -453,7 +454,7 @@ fun RedAutomationMainScreen() {
                     onClick = {
                         val pkg = targetPackage.trim()
                         if (com.example.engine.RootEngine.isRootGranted) {
-                            com.example.engine.RootEngine.enableAccessibilityViaRoot(context)
+                            com.example.engine.RootAutomationDaemon.start(context)
                         } else {
                             if (com.example.service.QuizAccessibilityService.instance == null) {
                                 Toast.makeText(context, "Turn ON Accessibility for P.R Automation", Toast.LENGTH_SHORT).show()
@@ -499,7 +500,7 @@ fun RedAutomationMainScreen() {
                 ) {
                     RedActionButton("▶ START", Color(0xFFD50020), Modifier.weight(1f)) {
                         if (com.example.engine.RootEngine.isRootGranted) {
-                            com.example.engine.RootEngine.enableAccessibilityViaRoot(context)
+                            com.example.engine.RootAutomationDaemon.start(context)
                         }
                         AutomationState.start()
                     }
@@ -507,16 +508,22 @@ fun RedAutomationMainScreen() {
                         AutomationState.pause()
                     }
                     RedActionButton("▶ RESUME", Color(0xFFB51025), Modifier.weight(1f)) {
+                        if (com.example.engine.RootEngine.isRootGranted) {
+                            com.example.engine.RootAutomationDaemon.start(context)
+                        }
                         AutomationState.resume()
                     }
                     RedActionButton("■ STOP", Color(0xFF550810), Modifier.weight(1f)) {
+                        if (com.example.engine.RootEngine.isRootGranted) {
+                            com.example.engine.RootAutomationDaemon.stop()
+                        }
                         AutomationState.stop()
                     }
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Floating HUD & Settings Toggles
+                // Floating HUD & Settings Toggles (ACCESSIBILITY completely hidden in Root Mode)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -548,9 +555,15 @@ fun RedAutomationMainScreen() {
                                 }
                             }
                         },
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("floating_hud_button"),
+                        modifier = if (AutomationState.isRooted) {
+                            Modifier
+                                .fillMaxWidth()
+                                .testTag("floating_hud_button")
+                        } else {
+                            Modifier
+                                .weight(1f)
+                                .testTag("floating_hud_button")
+                        },
                         border = BorderStroke(1.dp, RedOutline),
                         colors = ButtonDefaults.outlinedButtonColors(
                             contentColor = Color(0xFFFF6680)
@@ -566,27 +579,25 @@ fun RedAutomationMainScreen() {
                         )
                     }
 
-                    OutlinedButton(
-                        onClick = {
-                            if (com.example.engine.RootEngine.isRootGranted) {
-                                com.example.engine.RootEngine.enableAccessibilityViaRoot(context)
-                                Toast.makeText(context, "⚡ Root Active: Accessibility auto-enabled via SuperSU without opening settings!", Toast.LENGTH_LONG).show()
-                            } else {
+                    // Only shown for non-root users who require manual accessibility service
+                    if (!AutomationState.isRooted) {
+                        OutlinedButton(
+                            onClick = {
                                 context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                            }
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("accessibility_settings_button"),
-                        border = BorderStroke(1.dp, RedOutline),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = Color(0xFFFF6680)
-                        ),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Icon(Icons.Default.Accessibility, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("ACCESSIBILITY", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("accessibility_settings_button"),
+                            border = BorderStroke(1.dp, RedOutline),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = Color(0xFFFF6680)
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.Accessibility, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("ACCESSIBILITY", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
 

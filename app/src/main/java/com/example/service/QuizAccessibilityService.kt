@@ -51,6 +51,8 @@ class QuizAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(e: AccessibilityEvent?) {
+        // In pure root mode, accessibility service stands down completely
+        if (com.example.engine.RootEngine.isRootGranted) return
         if (!AutomationState.running || AutomationState.paused) return
         val target = AutomationState.target(this)
         if (target.isBlank()) return
@@ -223,6 +225,11 @@ class QuizAccessibilityService : AccessibilityService() {
         scannerThread = Thread {
             while (!Thread.currentThread().isInterrupted) {
                 try {
+                    // In pure root mode, accessibility scanner stands down completely
+                    if (com.example.engine.RootEngine.isRootGranted) {
+                        Thread.sleep(1000)
+                        continue
+                    }
                     // Strictly never click or scan outside the target app
                     if (AutomationState.running && !AutomationState.paused && isTargetAppInForeground()) {
                         var handled = false
