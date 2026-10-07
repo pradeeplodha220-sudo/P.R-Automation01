@@ -29,7 +29,7 @@ object RootEngine : RootAutomationBackend {
     private const val TAG = "PR_RootEngine"
     private val executor = Executors.newSingleThreadExecutor()
 
-    @Volatile var isRootAvailable: Boolean = false
+    @Volatile var isSuBinaryPresent: Boolean = false
         private set
 
     @Volatile var isRootGranted: Boolean = false
@@ -51,7 +51,7 @@ object RootEngine : RootAutomationBackend {
     fun detectRoot(callback: ((Boolean) -> Unit)? = null) {
         executor.execute {
             val exists = checkSuBinaryExists()
-            isRootAvailable = exists
+            isSuBinaryPresent = exists
             if (exists) {
                 val granted = testSuCommand()
                 isRootGranted = granted
@@ -240,7 +240,17 @@ object RootEngine : RootAutomationBackend {
     }
 
     override fun isRootAvailable(): Boolean {
-        return isRootGranted || checkSuBinaryExists()
+        // Canonical root check implementation: validates granted state and binary/command availability
+        if (isRootGranted) return true
+        if (checkSuBinaryExists()) {
+            val granted = testSuCommand()
+            if (granted) {
+                isRootGranted = true
+                AutomationState.isRooted = true
+                return true
+            }
+        }
+        return false
     }
 
     override fun dumpCurrentUi(): String {

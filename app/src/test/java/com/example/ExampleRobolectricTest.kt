@@ -51,6 +51,10 @@ class ExampleRobolectricTest {
   fun `test standalone AnswerEngine without AccessibilityService`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     
+    // Verify AnswerEngine implements AnswerProvider
+    assertTrue(com.example.engine.AnswerEngine is com.example.engine.AnswerProvider)
+    assertTrue(com.example.engine.RootEngine is com.example.engine.RootAutomationBackend)
+
     // Arithmetic question test
     val options = listOf(
       com.example.engine.QOpt("10", 0, android.graphics.Rect(0, 0, 100, 100)),

@@ -19,7 +19,11 @@ data class QuizData(
     val fingerprint: String
 )
 
-object AnswerEngine {
+interface AnswerProvider {
+    fun solve(c: Context, q: QuizData): Int
+}
+
+object AnswerEngine : AnswerProvider {
     private val db = HashMap<String, String>()
     private var loaded = false
 
@@ -38,7 +42,7 @@ object AnswerEngine {
         AutomationState.log("Local answer DB: ${db.size} entries")
     }
 
-    fun solve(c: Context, q: QuizData): Int {
+    override fun solve(c: Context, q: QuizData): Int {
         load(c)
 
         // FAST PATH 1: local cache
