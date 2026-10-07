@@ -154,4 +154,60 @@ class ExampleRobolectricTest {
     // Returns false or true without throwing exception
     org.junit.Assert.assertTrue(cleaned || !cleaned)
   }
+
+  @Test
+  fun `test parseDumpsysViewHierarchy extracts nodes and calculates absolute coordinates`() {
+    val sampleDumpsys = """
+      TASK 123:com.minipix.shorts id=123
+        ACTIVITY com.minipix.shorts/com.minipix.shorts.QuizActivity 83f7a1f pid=1234
+          View Hierarchy:
+            com.android.internal.policy.DecorView{827a3b8 V.E...... ........ 0,0-1080,2400}
+              android.widget.LinearLayout{d6a9e1 V.E...... ........ 0,0-1080,2400}
+                android.widget.FrameLayout{4e0b06 V.E...... ........ 0,100-1080,2300 #1020002 android:id/content}
+                  android.widget.TextView{3a17e0 V.ED..... ......ID 48,100-1032,300 #7f080120 app:id/question_view} text="What is the capital of France?"
+                  android.widget.Button{8e9102 V.E...C.. ........ 48,400-1032,540 #7f080121 app:id/opt_a} text="Paris"
+                  android.widget.Button{9a8712 V.E...C.. ........ 48,580-1032,720 #7f080122 app:id/opt_b} text="London"
+                  android.widget.Button{bc7654 V.E...C.. ........ 48,760-1032,900 #7f080123 app:id/opt_c} text="Berlin"
+                  android.widget.Button{de8976 V.E...C.. ........ 48,940-1032,1080 #7f080124 app:id/opt_d} text="Madrid"
+    """.trimIndent()
+
+    val nodes = com.example.engine.RootEngine.parseDumpsysViewHierarchy(sampleDumpsys)
+    assertEquals(6, nodes.size)
+
+    val question = nodes.find { it.text.contains("capital of France") }
+    org.junit.Assert.assertNotNull(question)
+    assertEquals("What is the capital of France?", question!!.content)
+    assertEquals("com.minipix.shorts", question.packageName)
+    // FrameLayout absTop = 100, TextView relTop = 100 -> absTop = 200, relBottom = 300 -> absBottom = 400
+    // CenterY = (200 + 400) / 2 = 300
+    assertEquals(540, question.centerX)
+    assertEquals(300, question.centerY)
+
+    val parisOpt = nodes.find { it.text == "Paris" }
+    org.junit.Assert.assertNotNull(parisOpt)
+    assertTrue(parisOpt!!.clickable)
+    assertEquals("opt_a", parisOpt.id)
+    // FrameLayout absTop = 100, Button relTop = 400 -> absTop = 500, relBottom = 540 -> absBottom = 640
+    // CenterY = (500 + 640) / 2 = 570
+    assertEquals(540, parisOpt.centerX)
+    assertEquals(570, parisOpt.centerY)
+  }
+
+  @Test
+  fun `test parseDumpsysViewHierarchy detects progression next button`() {
+    val resultDumpsys = """
+      TASK 123:com.minipix.shorts id=123
+        ACTIVITY com.minipix.shorts/com.minipix.shorts.ResultActivity 83f7a1f pid=1234
+          View Hierarchy:
+            com.android.internal.policy.DecorView{827a3b8 V.E...... ........ 0,0-1080,2400}
+              android.widget.Button{8e9102 V.E...C.. ........ 100,1600-980,1750 #7f080121 app:id/btn_next} text="Next"
+    """.trimIndent()
+
+    val nodes = com.example.engine.RootEngine.parseDumpsysViewHierarchy(resultDumpsys)
+    val nextBtn = nodes.find { it.text.equals("Next", ignoreCase = true) }
+    org.junit.Assert.assertNotNull(nextBtn)
+    assertEquals(540, nextBtn!!.centerX)
+    assertEquals(1675, nextBtn.centerY)
+    assertTrue(nextBtn.clickable)
+  }
 }

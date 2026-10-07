@@ -32,6 +32,12 @@ class OverlayService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
+        const val ACTION_START = "com.example.action.START"
+        const val ACTION_PAUSE = "com.example.action.PAUSE"
+        const val ACTION_RESUME = "com.example.action.RESUME"
+        const val ACTION_STOP = "com.example.action.STOP"
+        const val ACTION_TOGGLE_HUD = "com.example.action.TOGGLE_HUD"
+
         @Volatile var active = false
         @Volatile var isPanelOpen = false
         @Volatile var overlayBounds: List<Rect> = emptyList()
@@ -40,6 +46,12 @@ class OverlayService : Service() {
         fun minimize() {
             instance?.let { s ->
                 s.handler.post { s.hidePanel() }
+            }
+        }
+
+        fun updateServiceNotification() {
+            instance?.let { s ->
+                s.handler.post { s.updateNotification() }
             }
         }
 
@@ -327,6 +339,32 @@ class OverlayService : Service() {
         refreshOverlayBounds()
     }
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_START -> {
+                com.example.engine.RootEngine.cleanDeviceAccessibility()
+                com.example.engine.RootEngine.start(this)
+                updateNotification()
+            }
+            ACTION_PAUSE -> {
+                com.example.engine.RootEngine.pause()
+                updateNotification()
+            }
+            ACTION_RESUME -> {
+                com.example.engine.RootEngine.resume()
+                updateNotification()
+            }
+            ACTION_STOP -> {
+                com.example.engine.RootEngine.stop()
+                updateNotification()
+            }
+            ACTION_TOGGLE_HUD -> {
+                if (isPanelOpen) hidePanel() else showPanel()
+            }
+        }
+        return START_STICKY
+    }
+
     override fun onDestroy() {
         hidePanel()
         bubble?.let { runCatching { wm.removeView(it) } }
@@ -337,6 +375,12 @@ class OverlayService : Service() {
         super.onDestroy()
     }
 
+    fun updateNotification() {
+        runCatching {
+            getSystemService(NotificationManager::class.java).notify(4101, buildNotification())
+        }
+    }
+
     private fun buildNotification(): Notification {
         val pi = PendingIntent.getActivity(
             this,
@@ -344,11 +388,44 @@ class OverlayService : Service() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        return Notification.Builder(this, "pr_red_channel")
-            .setContentTitle("P.R Automation")
-            .setContentText("Red floating HUD & automation active")
+
+        val pausePi = PendingIntent.getService(
+            this,
+            1,
+            Intent(this, OverlayService::class.java).apply { action = ACTION_PAUSE },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val resumePi = PendingIntent.getService(
+            this,
+            2,
+            Intent(this, OverlayService::class.java).apply { action = ACTION_RESUME },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val stopPi = PendingIntent.getService(
+            this,
+            3,
+            Intent(this, OverlayService::class.java).apply { action = ACTION_STOP },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val builder = Notification.Builder(this, "pr_red_channel")
+            .setContentTitle("P.R Automation • ${AutomationState.status}")
+            .setContentText("Solved: ${AutomationState.solved} | Action: ${AutomationState.action.ifBlank { "Idle" }}")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(pi)
-            .build()
+
+        if (AutomationState.running && !AutomationState.paused) {
+            builder.addAction(Notification.Action.Builder(null, "⏸ PAUSE", pausePi).build())
+        } else if (AutomationState.paused) {
+            builder.addAction(Notification.Action.Builder(null, "▶ RESUME", resumePi).build())
+        }
+
+        if (AutomationState.running) {
+            builder.addAction(Notification.Action.Builder(null, "■ STOP", stopPi).build())
+        }
+
+        return builder.build()
     }
 }

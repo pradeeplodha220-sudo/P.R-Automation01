@@ -113,6 +113,9 @@ object AutomationState {
 
     fun notifyChange() {
         _stateUpdateTick.value = System.currentTimeMillis()
+        runCatching {
+            com.example.service.OverlayService.updateServiceNotification()
+        }
     }
 
     fun prefs(c: Context): SharedPreferences =
