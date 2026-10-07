@@ -379,7 +379,9 @@ object RootAutomationDaemon {
     private val blockedKeywords = listOf(
         "automation detected", "third party tool detected", "fair play violation",
         "unauthorized automation", "anti-cheat", "automation is not allowed",
-        "close automation", "disable automation tool", "security policy violation"
+        "close automation", "disable automation tool", "security policy violation",
+        "quiz is unavailable while an accessibility service is active",
+        "accessibility service is active", "disable the accessibility service"
     )
 
     fun start(context: Context) {
