@@ -5,9 +5,6 @@ import android.graphics.Rect
 import android.util.Log
 import android.util.Xml
 import com.example.service.OverlayService
-import com.example.engine.QOpt
-import com.example.engine.QuizData
-import com.example.engine.AnswerEngine
 import org.xmlpull.v1.XmlPullParser
 import java.io.BufferedReader
 import java.io.DataOutputStream
@@ -28,7 +25,7 @@ data class RootUiNode(
     val clickable: Boolean
 )
 
-object RootEngine {
+object RootEngine : RootAutomationBackend {
     private const val TAG = "PR_RootEngine"
     private val executor = Executors.newSingleThreadExecutor()
 
@@ -60,7 +57,7 @@ object RootEngine {
                 isRootGranted = granted
                 AutomationState.isRooted = granted
                 if (granted) {
-                    AutomationState.log("⚡ SuperSU / Root access granted (Zero-Accessibility Mode)")
+                    AutomationState.log("⚡ SuperSU / Root access granted (Clean Root Engine)")
                 } else {
                     AutomationState.log("Root binary found but su permission not granted")
                 }
@@ -84,7 +81,7 @@ object RootEngine {
         return false
     }
 
-    private fun testSuCommand(): Boolean {
+    fun testSuCommand(): Boolean {
         return try {
             val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "id"))
             val reader = BufferedReader(InputStreamReader(p.inputStream))
@@ -149,7 +146,7 @@ object RootEngine {
     }
 
     /**
-     * Dumps the screen hierarchy via uiautomator binary without requiring AccessibilityService
+     * Dumps the screen hierarchy via uiautomator binary
      */
     fun dumpScreenHierarchy(): String {
         val dumpFile = "/data/local/tmp/pr_dump.xml"
@@ -214,11 +211,71 @@ object RootEngine {
             }
         }
     }
+
+    // RootAutomationBackend interface implementation
+    override fun start(context: Context) {
+        if (!isRootAvailable()) {
+            AutomationState.setRootUnavailable("SuperSU / Root not detected or granted")
+            return
+        }
+        RootAutomationDaemon.start(context)
+        AutomationState.start()
+    }
+
+    override fun stop() {
+        RootAutomationDaemon.stop()
+        AutomationState.stop()
+    }
+
+    override fun pause() {
+        AutomationState.pause()
+    }
+
+    override fun resume() {
+        if (!isRootAvailable()) {
+            AutomationState.setRootUnavailable("SuperSU / Root not detected or granted")
+            return
+        }
+        AutomationState.resume()
+    }
+
+    override fun isRootAvailable(): Boolean {
+        return isRootGranted || checkSuBinaryExists()
+    }
+
+    override fun dumpCurrentUi(): String {
+        return dumpScreenHierarchy()
+    }
+
+    override fun performTap(x: Int, y: Int) {
+        tap(x, y)
+    }
+
+    override fun performBack() {
+        executor.execute {
+            try {
+                Runtime.getRuntime().exec(arrayOf("su", "-c", "input keyevent 4"))
+            } catch (t: Throwable) {
+                Log.e(TAG, "Root keyevent BACK failed", t)
+            }
+        }
+    }
+
+    override fun launchTarget(context: Context, packageName: String): Boolean {
+        if (packageName.isBlank()) return false
+        val intent = context.packageManager.getLaunchIntentForPackage(packageName)
+        return if (intent != null) {
+            context.startActivity(intent)
+            true
+        } else {
+            executeSu("monkey -p $packageName -c android.intent.category.LAUNCHER 1")
+        }
+    }
 }
 
 /**
  * Pure ROOT Automation Daemon.
- * Operates without turning on or requesting Android Accessibility Service.
+ * Operates without turning on, requesting, or checking Android Accessibility Service.
  */
 object RootAutomationDaemon {
     private var workerThread: Thread? = null
@@ -237,6 +294,12 @@ object RootAutomationDaemon {
         "✕", "×", "✖", "✗", "x", "X", "❌", "⊗", "▶▶|", ">>|", ">>", "|<<"
     )
 
+    private val blockedKeywords = listOf(
+        "automation detected", "third party tool detected", "fair play violation",
+        "unauthorized automation", "anti-cheat", "automation is not allowed",
+        "close automation", "disable automation tool", "security policy violation"
+    )
+
     fun start(context: Context) {
         if (isRunning) return
         isRunning = true
@@ -245,6 +308,7 @@ object RootAutomationDaemon {
         workerThread = Thread {
             var lastSolvedFp = ""
             var lastSolvedAt = 0L
+            var consecutiveDumpFailures = 0
 
             while (isRunning && AutomationState.running) {
                 try {
@@ -267,15 +331,40 @@ object RootAutomationDaemon {
 
                     val xml = RootEngine.dumpScreenHierarchy()
                     if (xml.isBlank()) {
+                        consecutiveDumpFailures++
+                        if (consecutiveDumpFailures >= 6) {
+                            AutomationState.setTargetUiUnavailable("Target UI hierarchy cannot be dumped by root backend")
+                            isRunning = false
+                            break
+                        }
                         Thread.sleep(300)
                         continue
                     }
+                    consecutiveDumpFailures = 0
 
                     val nodes = RootEngine.parseDumpXml(xml)
                     if (nodes.isEmpty()) {
                         Thread.sleep(300)
                         continue
                     }
+
+                    // Policy check: If target application explicitly reports automation restriction,
+                    // do NOT attempt to bypass or spoof. Report condition and stop.
+                    var blocked = false
+                    for (n in nodes) {
+                        val t = n.text.lowercase(Locale.ROOT)
+                        val d = n.desc.lowercase(Locale.ROOT)
+                        for (kw in blockedKeywords) {
+                            if (t.contains(kw) || d.contains(kw)) {
+                                AutomationState.setTargetBlockedAutomation("Target app policy restriction: $kw")
+                                isRunning = false
+                                blocked = true
+                                break
+                            }
+                        }
+                        if (blocked) break
+                    }
+                    if (blocked) break
 
                     // 1. Check for Close, Skip, Cross, Dismiss in target app or its ads
                     if (handleDismissAndAds(nodes)) {
@@ -304,7 +393,9 @@ object RootAutomationDaemon {
                 }
             }
             isRunning = false
-            AutomationState.log("⚡ Pure Root Engine stopped")
+            if (AutomationState.running) {
+                AutomationState.log("⚡ Pure Root Engine loop ended")
+            }
         }.apply {
             isDaemon = true
             name = "PR_RootAutomationDaemon"
@@ -406,7 +497,7 @@ object RootAutomationDaemon {
 
         val question = qPick.text.trim()
         val opts = best.sortedBy { it.bounds.top }.mapIndexed { i, n ->
-            QOpt(optionText(n.text), i, n.bounds, null)
+            QOpt(optionText(n.text), i, n.bounds)
         }
         if (opts.size < 2) return null
 

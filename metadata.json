@@ -1,6 +1,6 @@
 {
   "name": "P.R Automation",
-  "description": "Advanced quiz automation engine with full red cyber aesthetic, multi-AI solving, floating HUD, and accessibility scanner.",
+  "description": "Advanced quiz automation engine with full red cyber aesthetic, multi-AI solving, floating HUD, and clean root engine.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

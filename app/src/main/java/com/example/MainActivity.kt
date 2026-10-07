@@ -50,7 +50,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Accessibility
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -190,6 +189,7 @@ fun RedAutomationMainScreen() {
         targetValue = when (AutomationState.status) {
             "RUNNING" -> Color(0xFFFF1744)
             "PAUSED" -> Color(0xFFFF9100)
+            "ROOT UNAVAILABLE", "TARGET UI UNAVAILABLE", "TARGET BLOCKED AUTOMATION" -> Color(0xFFFF5252)
             else -> Color(0xFF8A1322)
         },
         label = "statusColor"
@@ -460,15 +460,9 @@ fun RedAutomationMainScreen() {
                 Button(
                     onClick = {
                         val pkg = targetPackage.trim()
-                        com.example.engine.RootAutomationDaemon.start(context)
-                        AutomationState.start()
-                        if (pkg.isNotBlank()) {
-                            val intent = context.packageManager.getLaunchIntentForPackage(pkg)
-                            if (intent != null) {
-                                context.startActivity(intent)
-                            } else {
-                                Toast.makeText(context, "Cannot launch app directly: $pkg", Toast.LENGTH_SHORT).show()
-                            }
+                        com.example.engine.RootEngine.start(context)
+                        if (pkg.isNotBlank() && AutomationState.running) {
+                            com.example.engine.RootEngine.launchTarget(context, pkg)
                         }
                     },
                     modifier = Modifier
@@ -499,100 +493,65 @@ fun RedAutomationMainScreen() {
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     RedActionButton("▶ START", Color(0xFFD50020), Modifier.weight(1f)) {
-                        com.example.engine.RootAutomationDaemon.start(context)
-                        AutomationState.start()
+                        com.example.engine.RootEngine.start(context)
                     }
                     RedActionButton("⏸ PAUSE", Color(0xFFC75000), Modifier.weight(1f)) {
-                        AutomationState.pause()
+                        com.example.engine.RootEngine.pause()
                     }
                     RedActionButton("▶ RESUME", Color(0xFFB51025), Modifier.weight(1f)) {
-                        com.example.engine.RootAutomationDaemon.start(context)
-                        AutomationState.resume()
+                        com.example.engine.RootEngine.resume()
                     }
                     RedActionButton("■ STOP", Color(0xFF550810), Modifier.weight(1f)) {
-                        com.example.engine.RootAutomationDaemon.stop()
-                        AutomationState.stop()
+                        com.example.engine.RootEngine.stop()
                     }
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Floating HUD & Settings Toggles (ACCESSIBILITY completely hidden in Root Mode)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = {
-                            val intent = Intent(context, OverlayService::class.java)
-                            if (OverlayService.active) {
-                                context.stopService(intent)
-                                overlayActive = false
-                            } else {
-                                if (com.example.engine.RootEngine.isRootGranted) {
-                                    com.example.engine.RootEngine.executeSu("appops set ${context.packageName} SYSTEM_ALERT_WINDOW allow")
-                                }
-                                if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(context) && !com.example.engine.RootEngine.isRootGranted) {
-                                    context.startActivity(
-                                        Intent(
-                                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                            Uri.parse("package:${context.packageName}")
-                                        )
-                                    )
-                                } else {
-                                    if (Build.VERSION.SDK_INT >= 26) {
-                                        context.startForegroundService(intent)
-                                    } else {
-                                        context.startService(intent)
-                                    }
-                                    overlayActive = true
-                                }
-                            }
-                        },
-                        modifier = if (AutomationState.isRooted) {
-                            Modifier
-                                .fillMaxWidth()
-                                .testTag("floating_hud_button")
+                // Floating HUD Control
+                OutlinedButton(
+                    onClick = {
+                        val intent = Intent(context, OverlayService::class.java)
+                        if (OverlayService.active) {
+                            context.stopService(intent)
+                            overlayActive = false
                         } else {
-                            Modifier
-                                .weight(1f)
-                                .testTag("floating_hud_button")
-                        },
-                        border = BorderStroke(1.dp, RedOutline),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = Color(0xFFFF6680)
-                        ),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Icon(Icons.Default.Layers, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = if (overlayActive) "HUD: ON" else "FLOATING HUD",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    // Only shown for non-root users who require manual accessibility service
-                    if (!AutomationState.isRooted) {
-                        OutlinedButton(
-                            onClick = {
-                                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                            },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("accessibility_settings_button"),
-                            border = BorderStroke(1.dp, RedOutline),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = Color(0xFFFF6680)
-                            ),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Icon(Icons.Default.Accessibility, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("ACCESSIBILITY", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            if (com.example.engine.RootEngine.isRootGranted) {
+                                com.example.engine.RootEngine.executeSu("appops set ${context.packageName} SYSTEM_ALERT_WINDOW allow")
+                            }
+                            if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(context) && !com.example.engine.RootEngine.isRootGranted) {
+                                context.startActivity(
+                                    Intent(
+                                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                        Uri.parse("package:${context.packageName}")
+                                    )
+                                )
+                            } else {
+                                if (Build.VERSION.SDK_INT >= 26) {
+                                    context.startForegroundService(intent)
+                                } else {
+                                    context.startService(intent)
+                                }
+                                overlayActive = true
+                            }
                         }
-                    }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("floating_hud_button"),
+                    border = BorderStroke(1.dp, RedOutline),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = Color(0xFFFF6680)
+                    ),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Icon(Icons.Default.Layers, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (overlayActive) "HUD: ON" else "FLOATING HUD",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(6.dp))

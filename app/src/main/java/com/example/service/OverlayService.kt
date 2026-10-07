@@ -261,17 +261,14 @@ class OverlayService : Service() {
         }
 
         add("▶ START", Color.rgb(215, 0, 35), Color.rgb(140, 0, 20)) {
-            com.example.engine.RootAutomationDaemon.start(this)
-            AutomationState.start()
+            com.example.engine.RootEngine.start(this)
         }
-        add("⏸ PAUSE", Color.rgb(170, 70, 0), Color.rgb(110, 45, 0)) { AutomationState.pause() }
+        add("⏸ PAUSE", Color.rgb(170, 70, 0), Color.rgb(110, 45, 0)) { com.example.engine.RootEngine.pause() }
         add("▶ RESUME", Color.rgb(200, 25, 45), Color.rgb(120, 10, 25)) {
-            com.example.engine.RootAutomationDaemon.start(this)
-            AutomationState.resume()
+            com.example.engine.RootEngine.resume()
         }
         add("■ STOP", Color.rgb(90, 10, 18), Color.rgb(50, 5, 10)) {
-            com.example.engine.RootAutomationDaemon.stop()
-            AutomationState.stop()
+            com.example.engine.RootEngine.stop()
         }
         add("— MINIMIZE", Color.rgb(45, 15, 20), Color.rgb(25, 8, 12)) { hidePanel() }
 
@@ -303,6 +300,9 @@ class OverlayService : Service() {
         val statusColor = when (AutomationState.status) {
             "RUNNING" -> "● RUNNING"
             "PAUSED" -> "⏸ PAUSED"
+            "ROOT UNAVAILABLE" -> "❌ ROOT UNAVAILABLE"
+            "TARGET UI UNAVAILABLE" -> "❌ UI UNAVAILABLE"
+            "TARGET BLOCKED AUTOMATION" -> "⛔ BLOCKED BY APP"
             else -> "■ STOPPED"
         }
         st.text = "$statusColor\nSolved: ${AutomationState.solved}  |  Failed: ${AutomationState.failed}\nAction: ${AutomationState.action}"

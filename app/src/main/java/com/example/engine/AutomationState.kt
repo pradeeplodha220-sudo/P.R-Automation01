@@ -84,6 +84,33 @@ object AutomationState {
         notifyChange()
     }
 
+    fun setRootUnavailable(reason: String = "Root access not available or superuser permission denied") {
+        running = false
+        paused = false
+        status = "ROOT UNAVAILABLE"
+        action = "Root Error"
+        log("❌ Error: $reason")
+        notifyChange()
+    }
+
+    fun setTargetUiUnavailable(reason: String = "Cannot inspect target application UI hierarchy") {
+        running = false
+        paused = false
+        status = "TARGET UI UNAVAILABLE"
+        action = "UI Inspection Error"
+        log("❌ Error: $reason")
+        notifyChange()
+    }
+
+    fun setTargetBlockedAutomation(reason: String = "Target application restricts automation") {
+        running = false
+        paused = false
+        status = "TARGET BLOCKED AUTOMATION"
+        action = "Automation Blocked"
+        log("⛔ Policy: $reason (Bypass strictly prohibited)")
+        notifyChange()
+    }
+
     fun notifyChange() {
         _stateUpdateTick.value = System.currentTimeMillis()
     }

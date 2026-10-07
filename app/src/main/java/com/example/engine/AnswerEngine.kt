@@ -2,7 +2,6 @@ package com.example.engine
 
 import android.content.Context
 import android.graphics.Rect
-import android.view.accessibility.AccessibilityNodeInfo
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
@@ -11,8 +10,7 @@ import kotlin.math.max
 data class QOpt(
     val text: String,
     val index: Int,
-    val bounds: Rect,
-    val node: AccessibilityNodeInfo? = null
+    val bounds: Rect
 )
 
 data class QuizData(
