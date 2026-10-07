@@ -461,6 +461,7 @@ fun RedAutomationMainScreen() {
                     onClick = {
                         val pkg = targetPackage.trim()
                         OverlayService.minimize()
+                        com.example.engine.RootEngine.cleanDeviceAccessibility()
                         com.example.engine.RootEngine.start(context)
                         if (pkg.isNotBlank() && AutomationState.running) {
                             com.example.engine.RootEngine.launchTarget(context, pkg)
@@ -505,6 +506,31 @@ fun RedAutomationMainScreen() {
                     RedActionButton("■ STOP", Color(0xFF550810), Modifier.weight(1f)) {
                         com.example.engine.RootEngine.stop()
                     }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // One-Tap Zero-Accessibility Fix
+                Button(
+                    onClick = {
+                        com.example.engine.RootEngine.cleanDeviceAccessibility()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(42.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF00796B)
+                    ),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Icon(Icons.Default.Check, contentDescription = null, tint = Color.White)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "🛡️ ZERO ACCESSIBILITY FIX (CLEAN SYSTEM SETTINGS)",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))

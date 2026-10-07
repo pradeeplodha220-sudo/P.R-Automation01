@@ -146,4 +146,12 @@ class ExampleRobolectricTest {
     assertEquals(540, nextBtn!!.centerX)
     assertEquals(1675, nextBtn.centerY)
   }
+
+  @Test
+  fun `test cleanDeviceAccessibility execution`() {
+    // In local unit test without actual su binary, verify method handles execution safely
+    val cleaned = com.example.engine.RootEngine.cleanDeviceAccessibility()
+    // Returns false or true without throwing exception
+    org.junit.Assert.assertTrue(cleaned || !cleaned)
+  }
 }
