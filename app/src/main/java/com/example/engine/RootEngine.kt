@@ -146,30 +146,6 @@ object RootEngine : RootAutomationBackend {
     }
 
     /**
-     * Cleans lingering or third-party accessibility services in Android system settings via root.
-     * Guarantees 0% active accessibility services on the device so target quiz apps do not block.
-     */
-    fun cleanDeviceAccessibility(): Boolean {
-        return try {
-            val before = executeSuWithOutput("settings get secure enabled_accessibility_services")
-            if (before.isNotBlank() && before != "null") {
-                AutomationState.log("Found active accessibility services: $before")
-            }
-            executeSu("settings put secure enabled_accessibility_services ''")
-            executeSu("settings put secure accessibility_enabled 0")
-            executeSu("settings put secure accessibility_shortcut_enabled 0")
-            executeSu("settings put secure accessibility_button_targets ''")
-            executeSu("settings put secure high_text_contrast_enabled 0")
-            val after = executeSuWithOutput("settings get secure enabled_accessibility_services")
-            AutomationState.log("⚡ Zero-Accessibility Locked (Active services: ${after.ifBlank { "0" }})")
-            true
-        } catch (t: Throwable) {
-            Log.e(TAG, "cleanDeviceAccessibility failed", t)
-            false
-        }
-    }
-
-    /**
      * Dumps the screen hierarchy via native 'dumpsys activity top' without touching AccessibilityService or UiAutomation.
      * Guarantees 0% accessibility detection by third-party apps and prevents warning dialogs or blinking.
      */
@@ -431,10 +407,8 @@ object RootEngine : RootAutomationBackend {
             AutomationState.setRootUnavailable("SuperSU / Root not detected or granted")
             return
         }
-        // Auto-clean any lingering accessibility services in system settings before running
-        cleanDeviceAccessibility()
-        RootAutomationDaemon.start(context)
         AutomationState.start()
+        RootAutomationDaemon.start(context)
     }
 
     override fun stop() {
@@ -508,8 +482,7 @@ object RootEngine : RootAutomationBackend {
 }
 
 /**
- * Pure ROOT Automation Daemon.
- * Operates without turning on, requesting, or checking Android Accessibility Service.
+ * Root automation daemon for an explicitly selected test application.
  */
 object RootAutomationDaemon {
     private var workerThread: Thread? = null
@@ -537,7 +510,7 @@ object RootAutomationDaemon {
     fun start(context: Context) {
         if (isRunning) return
         isRunning = true
-        AutomationState.log("⚡ Pure Root Engine started (No Accessibility)")
+        AutomationState.log("Root test engine started")
 
         workerThread = Thread {
             var lastSolvedFp = ""
@@ -552,7 +525,7 @@ object RootAutomationDaemon {
                         continue
                     }
 
-                    // 1. Primary Engine: Zero-Accessibility Stealth Dumpsys View Extraction
+                    // 1. Read the selected test app's current UI hierarchy.
                     var nodes = RootEngine.dumpScreenViaDumpsys()
 
                     if (nodes.isEmpty()) {
@@ -573,27 +546,31 @@ object RootAutomationDaemon {
                     }
 
                     val target = AutomationState.target(context).trim()
-                    val selfPkg = context.packageName
+                    if (target.isBlank()) {
+                        AutomationState.setTargetUiUnavailable("Select an authorized test app before starting")
+                        break
+                    }
 
-                    // 1. Isolate target application nodes (Never scan P.R Automation's own UI)
-                    val relevantNodes = if (target.isNotBlank()) {
-                        val matching = nodes.filter { it.packageName.contains(target, ignoreCase = true) }
-                        if (matching.isEmpty()) {
-                            val activePkgs = nodes.map { it.packageName }
-                                .filter { it.isNotBlank() && it != selfPkg && !it.contains("prautomation") }
-                                .distinct().take(3)
-                            val now = System.currentTimeMillis()
-                            if (now - lastStatusLogTime > 4000L) {
-                                AutomationState.log("Scanning screen: ${nodes.size} views (Foreground: ${activePkgs.joinToString()}). Continuing scan...")
-                                lastStatusLogTime = now
-                            }
-                            // Accept nodes that don't match self package to avoid blocking when target package name is not stamped
-                            nodes.filter { it.packageName.isBlank() || (it.packageName != selfPkg && !it.packageName.contains("prautomation")) }
-                        } else {
-                            matching
+                    val foreground = RootEngine.getForegroundPackage(forceRefresh = true)
+                    if (foreground != target) {
+                        val now = System.currentTimeMillis()
+                        if (now - lastStatusLogTime > 4000L) {
+                            AutomationState.log("Waiting for selected test app: $target (foreground: ${foreground.ifBlank { "unknown" }})")
+                            lastStatusLogTime = now
                         }
-                    } else {
-                        nodes.filter { it.packageName != selfPkg && !it.packageName.contains("prautomation") && !it.packageName.contains("systemui") }
+                        Thread.sleep(300)
+                        continue
+                    }
+
+                    val relevantNodes = nodes.filter { it.packageName == target }
+                    if (relevantNodes.isEmpty()) {
+                        val now = System.currentTimeMillis()
+                        if (now - lastStatusLogTime > 4000L) {
+                            AutomationState.log("Selected test app is foreground, but its UI hierarchy is empty")
+                            lastStatusLogTime = now
+                        }
+                        Thread.sleep(300)
+                        continue
                     }
 
                     // Policy check: If target application explicitly reports automation restriction, stop safely
@@ -636,7 +613,7 @@ object RootAutomationDaemon {
                             continue
                         } else {
                             if (now - lastStatusLogTime > 4000L) {
-                                AutomationState.log("Stealth Scan: ${relevantNodes.size} UI elements, analyzing quiz layout...")
+                                AutomationState.log("Test scan: ${relevantNodes.size} UI elements, analyzing quiz layout...")
                                 lastStatusLogTime = now
                             }
                         }

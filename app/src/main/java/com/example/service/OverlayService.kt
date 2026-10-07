@@ -342,7 +342,6 @@ class OverlayService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                com.example.engine.RootEngine.cleanDeviceAccessibility()
                 com.example.engine.RootEngine.start(this)
                 updateNotification()
             }
