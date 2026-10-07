@@ -261,23 +261,16 @@ class OverlayService : Service() {
         }
 
         add("▶ START", Color.rgb(215, 0, 35), Color.rgb(140, 0, 20)) {
-            if (com.example.engine.RootEngine.isRootGranted) {
-                com.example.engine.RootEngine.disableAccessibilityServiceViaRoot(this)
-                com.example.engine.RootAutomationDaemon.start(this)
-            }
+            com.example.engine.RootAutomationDaemon.start(this)
             AutomationState.start()
         }
         add("⏸ PAUSE", Color.rgb(170, 70, 0), Color.rgb(110, 45, 0)) { AutomationState.pause() }
         add("▶ RESUME", Color.rgb(200, 25, 45), Color.rgb(120, 10, 25)) {
-            if (com.example.engine.RootEngine.isRootGranted) {
-                com.example.engine.RootAutomationDaemon.start(this)
-            }
+            com.example.engine.RootAutomationDaemon.start(this)
             AutomationState.resume()
         }
         add("■ STOP", Color.rgb(90, 10, 18), Color.rgb(50, 5, 10)) {
-            if (com.example.engine.RootEngine.isRootGranted) {
-                com.example.engine.RootAutomationDaemon.stop()
-            }
+            com.example.engine.RootAutomationDaemon.stop()
             AutomationState.stop()
         }
         add("— MINIMIZE", Color.rgb(45, 15, 20), Color.rgb(25, 8, 12)) { hidePanel() }

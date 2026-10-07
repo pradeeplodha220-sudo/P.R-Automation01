@@ -5,9 +5,9 @@ import android.graphics.Rect
 import android.util.Log
 import android.util.Xml
 import com.example.service.OverlayService
-import com.example.service.QOpt
-import com.example.service.QuizAccessibilityService
-import com.example.service.QuizData
+import com.example.engine.QOpt
+import com.example.engine.QuizData
+import com.example.engine.AnswerEngine
 import org.xmlpull.v1.XmlPullParser
 import java.io.BufferedReader
 import java.io.DataOutputStream
@@ -110,60 +110,8 @@ object RootEngine {
         }
     }
 
-    /**
-     * Ensures our Accessibility Service is completely disabled in root mode,
-     * so that other apps see NO accessibility service at all.
-     */
-    fun disableAccessibilityServiceViaRoot(context: Context) {
-        val pkg = context.packageName
-        val serviceComponent = "$pkg/com.example.service.QuizAccessibilityService"
-
-        // 1. Disable the component via PackageManager so the OS unregisters it completely
-        try {
-            val component = android.content.ComponentName(context, "com.example.service.QuizAccessibilityService")
-            context.packageManager.setComponentEnabledSetting(
-                component,
-                android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                android.content.pm.PackageManager.DONT_KILL_APP
-            )
-        } catch (t: Throwable) {
-            Log.e(TAG, "Failed to disable component via PackageManager", t)
-        }
-
-        if (!isRootGranted) return
-
-        // 2. Disable via root shell pm and remove from secure settings
-        val script = """
-            pm disable $serviceComponent 2>/dev/null
-            current=$(settings get secure enabled_accessibility_services)
-            if [[ "${'$'}current" == *"$serviceComponent"* ]]; then
-                new_val=$(echo "${'$'}current" | sed 's#$serviceComponent##g' | sed 's/::/:/g' | sed 's/^://g' | sed 's/:$//g')
-                if [ -z "${'$'}new_val" ] || [ "${'$'}new_val" = "null" ]; then
-                    settings put secure enabled_accessibility_services ""
-                    settings put secure accessibility_enabled 0
-                else
-                    settings put secure enabled_accessibility_services "${'$'}new_val"
-                fi
-            fi
-        """.trimIndent()
-        executeSu(script)
-        AutomationState.log("⚡ Root Mode: Accessibility service completely disabled")
-    }
-
-    /**
-     * Re-enables the Accessibility Service component for non-root mode.
-     */
-    fun enableAccessibilityServiceForNonRoot(context: Context) {
-        try {
-            val component = android.content.ComponentName(context, "com.example.service.QuizAccessibilityService")
-            context.packageManager.setComponentEnabledSetting(
-                component,
-                android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
-                android.content.pm.PackageManager.DONT_KILL_APP
-            )
-        } catch (t: Throwable) {
-            Log.e(TAG, "Failed to enable component via PackageManager", t)
-        }
+    fun shutdown() {
+        runCatching { executor.shutdownNow() }
     }
 
     fun executeSuWithOutput(cmd: String): String {
@@ -469,7 +417,7 @@ object RootAutomationDaemon {
         AutomationState.action = "Root: Solving question"
         AutomationState.log("⚡ Root Question: ${question.take(100)}")
 
-        val idx = QuizAccessibilityService.AnswerProvider.solve(context, QuizData(question, opts, fp))
+        val idx = AnswerEngine.solve(context, QuizData(question, opts, fp))
         if (idx in opts.indices) {
             val chosen = opts[idx]
             AutomationState.lastAnswer = chosen.text

@@ -141,6 +141,13 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onDestroy() {
+        if (isFinishing && !AutomationState.running) {
+            com.example.engine.RootEngine.shutdown()
+        }
+        super.onDestroy()
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -164,13 +171,8 @@ fun RedAutomationMainScreen() {
     LaunchedEffect(Unit) {
         com.example.engine.RootEngine.detectRoot { granted ->
             if (granted) {
-                // Ensure accessibility service is completely OFF in root mode
-                com.example.engine.RootEngine.disableAccessibilityServiceViaRoot(context)
                 // Grant overlay permission via root so HUD works without prompts
                 com.example.engine.RootEngine.executeSu("appops set ${context.packageName} SYSTEM_ALERT_WINDOW allow")
-            } else {
-                // Non-root mode: ensure accessibility service component is enabled
-                com.example.engine.RootEngine.enableAccessibilityServiceForNonRoot(context)
             }
         }
         val pm = context.packageManager
@@ -389,7 +391,7 @@ fun RedAutomationMainScreen() {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = if (AutomationState.isRooted) "⚡ ROOT MODE:" else "🛡 MODE:",
+                            text = if (AutomationState.isRooted) "⚡ ROOT MODE:" else "🛡 STANDALONE MODE:",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Black,
                             color = if (AutomationState.isRooted) Color(0xFFFF3355) else Color(0xFFFF99A8)
@@ -397,9 +399,9 @@ fun RedAutomationMainScreen() {
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = if (AutomationState.isRooted)
-                                "SuperSU / Root Active (Zero-Permission Auto Mode)"
+                                "Root Engine Active (Zero-Accessibility Auto Mode)"
                             else
-                                "Non-Root Mode (Accessibility Service)",
+                                "Standalone Engine (Direct Control Mode)",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White
@@ -458,14 +460,7 @@ fun RedAutomationMainScreen() {
                 Button(
                     onClick = {
                         val pkg = targetPackage.trim()
-                        if (com.example.engine.RootEngine.isRootGranted) {
-                            com.example.engine.RootAutomationDaemon.start(context)
-                        } else {
-                            if (com.example.service.QuizAccessibilityService.instance == null) {
-                                Toast.makeText(context, "Turn ON Accessibility for P.R Automation", Toast.LENGTH_SHORT).show()
-                                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                            }
-                        }
+                        com.example.engine.RootAutomationDaemon.start(context)
                         AutomationState.start()
                         if (pkg.isNotBlank()) {
                             val intent = context.packageManager.getLaunchIntentForPackage(pkg)
@@ -504,24 +499,18 @@ fun RedAutomationMainScreen() {
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     RedActionButton("▶ START", Color(0xFFD50020), Modifier.weight(1f)) {
-                        if (com.example.engine.RootEngine.isRootGranted) {
-                            com.example.engine.RootAutomationDaemon.start(context)
-                        }
+                        com.example.engine.RootAutomationDaemon.start(context)
                         AutomationState.start()
                     }
                     RedActionButton("⏸ PAUSE", Color(0xFFC75000), Modifier.weight(1f)) {
                         AutomationState.pause()
                     }
                     RedActionButton("▶ RESUME", Color(0xFFB51025), Modifier.weight(1f)) {
-                        if (com.example.engine.RootEngine.isRootGranted) {
-                            com.example.engine.RootAutomationDaemon.start(context)
-                        }
+                        com.example.engine.RootAutomationDaemon.start(context)
                         AutomationState.resume()
                     }
                     RedActionButton("■ STOP", Color(0xFF550810), Modifier.weight(1f)) {
-                        if (com.example.engine.RootEngine.isRootGranted) {
-                            com.example.engine.RootAutomationDaemon.stop()
-                        }
+                        com.example.engine.RootAutomationDaemon.stop()
                         AutomationState.stop()
                     }
                 }
