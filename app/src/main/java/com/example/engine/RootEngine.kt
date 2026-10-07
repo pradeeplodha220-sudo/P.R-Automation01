@@ -22,8 +22,21 @@ data class RootUiNode(
     val desc: String,
     val id: String,
     val bounds: Rect,
-    val clickable: Boolean
-)
+    val clickable: Boolean,
+    val className: String = "",
+    val checkable: Boolean = false,
+    val checked: Boolean = false,
+    val enabled: Boolean = true
+) {
+    /**
+     * Effective content text, prioritizing non-blank text and falling back to content-desc.
+     */
+    val content: String
+        get() = if (text.isNotBlank()) text.trim() else desc.trim()
+
+    val centerX: Int get() = bounds.centerX()
+    val centerY: Int get() = bounds.centerY()
+}
 
 object RootEngine : RootAutomationBackend {
     private const val TAG = "PR_RootEngine"
@@ -34,6 +47,9 @@ object RootEngine : RootAutomationBackend {
 
     @Volatile var isRootGranted: Boolean = false
         private set
+
+    @Volatile private var cachedFgPackage = ""
+    @Volatile private var lastFgCheckTime = 0L
 
     private val SU_PATHS = arrayOf(
         "/system/bin/su",
@@ -129,33 +145,44 @@ object RootEngine : RootAutomationBackend {
     }
 
     /**
-     * Retrieves the current foreground package name using root shell dumpsys
+     * Retrieves the current foreground package name using fast shell queries with short caching.
      */
-    fun getForegroundPackage(): String {
-        val out = executeSuWithOutput("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
-        if (out.isNotBlank()) {
-            val m = Regex("([a-zA-Z0-9_]+(?:\\.[a-zA-Z0-9_]+)+)/").find(out)
-            if (m != null) return m.groupValues[1]
+    fun getForegroundPackage(forceRefresh: Boolean = false): String {
+        val now = System.currentTimeMillis()
+        if (!forceRefresh && (now - lastFgCheckTime) < 1000L && cachedFgPackage.isNotBlank()) {
+            return cachedFgPackage
         }
-        val out2 = executeSuWithOutput("dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity'")
-        if (out2.isNotBlank()) {
-            val m2 = Regex("([a-zA-Z0-9_]+(?:\\.[a-zA-Z0-9_]+)+)/").find(out2)
-            if (m2 != null) return m2.groupValues[1]
+        val out = executeSuWithOutput("dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' || dumpsys activity activities 2>/dev/null | grep -E 'mResumedActivity|topResumedActivity'")
+        val m = Regex("([a-zA-Z0-9_]+(?:\\.[a-zA-Z0-9_]+)+)/").find(out)
+        val pkg = m?.groupValues?.get(1)?.trim().orEmpty()
+        if (pkg.isNotBlank()) {
+            cachedFgPackage = pkg
+            lastFgCheckTime = now
         }
-        return ""
+        return pkg.ifBlank { cachedFgPackage }
     }
 
     /**
-     * Dumps the screen hierarchy via uiautomator binary
+     * Dumps the screen hierarchy via uiautomator binary with atomic cleanup of stale dumps.
      */
     fun dumpScreenHierarchy(): String {
-        val dumpFile = "/data/local/tmp/pr_dump.xml"
-        executeSu("uiautomator dump --compressed $dumpFile")
-        return executeSuWithOutput("cat $dumpFile")
+        val primaryDump = "/data/local/tmp/pr_dump.xml"
+        val fallbackDump = "/sdcard/window_dump.xml"
+
+        // Atomic pipeline: remove old dump -> dump current -> cat stdout -> remove dump
+        val primaryCmd = "rm -f $primaryDump && uiautomator dump --compressed $primaryDump >/dev/null 2>&1 && cat $primaryDump && rm -f $primaryDump"
+        var out = executeSuWithOutput(primaryCmd)
+
+        if (out.isBlank() || (!out.contains("<hierarchy") && !out.contains("<?xml"))) {
+            // Fallback to /sdcard/window_dump.xml if /data/local/tmp was restricted
+            val fallbackCmd = "rm -f $fallbackDump && uiautomator dump $fallbackDump >/dev/null 2>&1 && cat $fallbackDump && rm -f $fallbackDump"
+            out = executeSuWithOutput(fallbackCmd)
+        }
+        return out
     }
 
     /**
-     * Parses the uiautomator XML dump into structured nodes
+     * Parses the uiautomator XML dump into structured nodes using fast XmlPullParser.
      */
     fun parseDumpXml(xml: String): List<RootUiNode> {
         if (xml.isBlank()) return emptyList()
@@ -169,12 +196,16 @@ object RootEngine : RootAutomationBackend {
                     val text = parser.getAttributeValue(null, "text") ?: ""
                     val desc = parser.getAttributeValue(null, "content-desc") ?: ""
                     val id = parser.getAttributeValue(null, "resource-id") ?: ""
+                    val cls = parser.getAttributeValue(null, "class") ?: ""
                     val boundsStr = parser.getAttributeValue(null, "bounds") ?: ""
                     val clickable = parser.getAttributeValue(null, "clickable") == "true"
+                    val checkable = parser.getAttributeValue(null, "checkable") == "true"
+                    val checked = parser.getAttributeValue(null, "checked") == "true"
+                    val enabled = parser.getAttributeValue(null, "enabled") != "false"
 
                     val rect = parseBounds(boundsStr)
                     if (rect != null && rect.width() > 0 && rect.height() > 0) {
-                        list.add(RootUiNode(text, desc, id, rect, clickable))
+                        list.add(RootUiNode(text, desc, id, rect, clickable, cls, checkable, checked, enabled))
                     }
                 }
                 eventType = parser.next()
@@ -205,7 +236,8 @@ object RootEngine : RootAutomationBackend {
         }
         executor.execute {
             try {
-                Runtime.getRuntime().exec(arrayOf("su", "-c", "input tap $x $y"))
+                val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "input tap $x $y"))
+                p.waitFor()
             } catch (t: Throwable) {
                 Log.e(TAG, "Root tap failed at ($x, $y)", t)
             }
@@ -218,7 +250,8 @@ object RootEngine : RootAutomationBackend {
     fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int = 300) {
         executor.execute {
             try {
-                Runtime.getRuntime().exec(arrayOf("su", "-c", "input swipe $x1 $y1 $x2 $y2 $durationMs"))
+                val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "input swipe $x1 $y1 $x2 $y2 $durationMs"))
+                p.waitFor()
             } catch (t: Throwable) {
                 Log.e(TAG, "Root swipe failed from ($x1,$y1) to ($x2,$y2)", t)
             }
@@ -232,7 +265,8 @@ object RootEngine : RootAutomationBackend {
         val sanitized = text.replace(" ", "%s").replace("\"", "\\\"")
         executor.execute {
             try {
-                Runtime.getRuntime().exec(arrayOf("su", "-c", "input text \"$sanitized\""))
+                val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "input text \"$sanitized\""))
+                p.waitFor()
             } catch (t: Throwable) {
                 Log.e(TAG, "Root typeText failed for: $text", t)
             }
@@ -295,7 +329,8 @@ object RootEngine : RootAutomationBackend {
     override fun performBack() {
         executor.execute {
             try {
-                Runtime.getRuntime().exec(arrayOf("su", "-c", "input keyevent 4"))
+                val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "input keyevent 4"))
+                p.waitFor()
             } catch (t: Throwable) {
                 Log.e(TAG, "Root keyevent BACK failed", t)
             }
@@ -354,6 +389,7 @@ object RootAutomationDaemon {
             var lastSolvedFp = ""
             var lastSolvedAt = 0L
             var consecutiveDumpFailures = 0
+            var lastStatusLogTime = 0L
 
             while (isRunning && AutomationState.running) {
                 try {
@@ -361,28 +397,36 @@ object RootAutomationDaemon {
                         Thread.sleep(400)
                         continue
                     }
-                    val target = AutomationState.target(context)
-                    if (target.isBlank()) {
-                        Thread.sleep(500)
-                        continue
-                    }
-
-                    // STRICT: Only operate inside the target app
+                    val target = AutomationState.target(context).trim()
                     val fg = RootEngine.getForegroundPackage()
-                    if (fg != target) {
-                        Thread.sleep(500)
-                        continue
+
+                    // If a target package is configured, check if we are in or targeting that package
+                    if (target.isNotBlank() && fg.isNotBlank()) {
+                        val inTarget = fg.contains(target, ignoreCase = true) || target.contains(fg, ignoreCase = true)
+                        if (!inTarget) {
+                            val now = System.currentTimeMillis()
+                            if (now - lastStatusLogTime > 4000L) {
+                                AutomationState.log("Waiting for target app '$target' (Current foreground: '$fg')")
+                                lastStatusLogTime = now
+                            }
+                            Thread.sleep(500)
+                            continue
+                        }
                     }
 
+                    // Dump screen XML
                     val xml = RootEngine.dumpScreenHierarchy()
-                    if (xml.isBlank()) {
+                    if (xml.isBlank() || (!xml.contains("<hierarchy") && !xml.contains("<?xml"))) {
                         consecutiveDumpFailures++
-                        if (consecutiveDumpFailures >= 6) {
+                        if (consecutiveDumpFailures == 1 || consecutiveDumpFailures % 4 == 0) {
+                            AutomationState.log("UI Dump waiting for screen layout (#$consecutiveDumpFailures)...")
+                        }
+                        if (consecutiveDumpFailures >= 10) {
                             AutomationState.setTargetUiUnavailable("Target UI hierarchy cannot be dumped by root backend")
                             isRunning = false
                             break
                         }
-                        Thread.sleep(300)
+                        Thread.sleep(350)
                         continue
                     }
                     consecutiveDumpFailures = 0
@@ -419,13 +463,18 @@ object RootAutomationDaemon {
 
                     // 2. Check for Quiz Question & Options
                     val now = System.currentTimeMillis()
-                    if (now - lastSolvedAt > 700) {
+                    if (now - lastSolvedAt > 600) {
                         val solved = handleQuizSolving(context, nodes, lastSolvedFp)
                         if (solved != null) {
                             lastSolvedFp = solved
                             lastSolvedAt = System.currentTimeMillis()
-                            Thread.sleep(1100)
+                            Thread.sleep(1000)
                             continue
+                        } else {
+                            if (now - lastStatusLogTime > 4000L) {
+                                AutomationState.log("Scanning screen: ${nodes.size} UI elements, searching for question...")
+                                lastStatusLogTime = now
+                            }
                         }
                     }
 
@@ -459,7 +508,7 @@ object RootAutomationDaemon {
             val text = n.text.trim().lowercase(Locale.ROOT)
             val desc = n.desc.trim().lowercase(Locale.ROOT)
             val id = n.id.lowercase(Locale.ROOT)
-            val raw = n.text.trim()
+            val raw = n.content.trim()
 
             val textMatch = text in closeKeywords ||
                 text.contains("skip ad") || text.contains("close ad") ||
@@ -477,8 +526,8 @@ object RootAutomationDaemon {
                 id.contains("dismiss") || id.contains("cross") || id.contains("cancel")
 
             if (textMatch || descMatch || symbolMatch || idMatch) {
-                val cx = n.bounds.centerX()
-                val cy = n.bounds.centerY()
+                val cx = n.centerX
+                val cy = n.centerY
                 if (!OverlayService.isTouchInsideOverlay(cx, cy)) {
                     val label = if (n.text.isNotBlank()) n.text else (if (n.desc.isNotBlank()) n.desc else n.id)
                     AutomationState.log("⚡ Root Auto-Closed: $label at ($cx, $cy)")
@@ -492,88 +541,168 @@ object RootAutomationDaemon {
 
     private fun handleQuizSolving(context: Context, nodes: List<RootUiNode>, lastFp: String): String? {
         fun norm(s: String) = s.trim().lowercase(Locale.ROOT).replace(Regex("\\s+"), " ")
-        fun optionText(s: String) = s.replace(Regex("^\\s*(?:[A-Ha-h]|\\d{1,2})\\s*[.)\\]:-]\\s*"), "").trim()
+        fun cleanOptionText(s: String) = s.replace(Regex("^\\s*(?:[A-Ha-h]|\\d{1,2})\\s*[.)\\]:-]\\s*"), "").trim()
 
-        val nav = setOf("home", "reels", "mylist", "search", "quiz", "tasks", "settings", "share", "follow", "login", "sign in", "quit level", "remove 50% wrong options")
+        val navWords = setOf(
+            "home", "reels", "mylist", "search", "quiz", "tasks", "settings", "share",
+            "follow", "login", "sign in", "quit level", "remove 50%", "pause", "resume",
+            "score", "coins", "points", "level", "streak", "rank", "profile"
+        )
 
+        // 1. Gather option candidates
         val optionCandidates = nodes.filter { n ->
-            val t = norm(optionText(n.text))
-            t.length in 1..180 && t !in nav && n.clickable &&
-                !t.contains("time left") && !t.contains("difficulty")
-        }.distinctBy { norm(optionText(it.text)) + "@" + it.bounds.top / 8 }
+            val content = n.content
+            val clean = cleanOptionText(content)
+            val lower = norm(clean)
+            if (clean.isBlank() || clean.length > 200) return@filter false
+            if (lower in navWords) return@filter false
+            if (lower.contains("time left") || lower.contains("difficulty") || lower.contains("quit level")) return@filter false
 
-        var best = emptyList<RootUiNode>()
-        var bestScore = -1
-        for (base in optionCandidates) {
-            val run = optionCandidates.filter { n ->
-                n.bounds.top >= base.bounds.top &&
-                    n.bounds.top - base.bounds.top <= 1100 &&
-                    abs(n.bounds.centerX() - base.bounds.centerX()) <= max(140, base.bounds.width() / 2)
-            }.sortedBy { it.bounds.top }.distinctBy { norm(optionText(it.text)) }.take(8)
+            val isExplicitOptionId = n.id.contains("option", true) || n.id.contains("choice", true) ||
+                    n.id.contains("answer", true) || n.id.contains("radio", true) || n.id.contains("btn_ans", true)
+            val hasOptionPrefix = Regex("^\\s*(?:[A-Ha-h]|\\d{1,2})\\s*[.)\\]:-]").containsMatchIn(content)
+            val isButtonOrClickable = n.clickable || n.className.contains("Button", true) || n.className.contains("Radio", true) || n.className.contains("Card", true)
+            val isReasonableOptionSize = n.bounds.width() >= 100 && n.bounds.height() in 35..450
 
-            if (run.size >= 2) {
-                val score = run.size * 100
-                if (score > bestScore) {
-                    bestScore = score
-                    best = run
+            isExplicitOptionId || hasOptionPrefix || isButtonOrClickable || isReasonableOptionSize
+        }.distinctBy { cleanOptionText(it.content).lowercase(Locale.ROOT) + "@" + (it.bounds.top / 12) }
+
+        var bestOptions = emptyList<RootUiNode>()
+        var bestOptionScore = -1
+
+        // Strategy A: ID-based grouping
+        val idGrouped = optionCandidates.filter {
+            it.id.contains("option", true) || it.id.contains("choice", true) || it.id.contains("answer", true)
+        }
+        if (idGrouped.size in 2..8) {
+            bestOptions = idGrouped.sortedWith(compareBy({ it.bounds.top }, { it.bounds.left }))
+            bestOptionScore = idGrouped.size * 200
+        }
+
+        // Strategy B: Prefix pattern grouping (A, B, C, D)
+        if (bestOptions.isEmpty()) {
+            val prefixGrouped = optionCandidates.filter {
+                Regex("^\\s*(?:[A-Ha-h]|\\d{1,2})\\s*[.)\\]:-]").containsMatchIn(it.content)
+            }
+            if (prefixGrouped.size in 2..8) {
+                bestOptions = prefixGrouped.sortedWith(compareBy({ it.bounds.top }, { it.bounds.left }))
+                bestOptionScore = prefixGrouped.size * 180
+            }
+        }
+
+        // Strategy C: Spatial column alignment
+        if (bestOptions.isEmpty()) {
+            for (base in optionCandidates) {
+                val columnRun = optionCandidates.filter { n ->
+                    n.bounds.top >= base.bounds.top &&
+                        n.bounds.top - base.bounds.top <= 1400 &&
+                        abs(n.bounds.centerX() - base.bounds.centerX()) <= max(180, base.bounds.width() / 2) &&
+                        abs(n.bounds.width() - base.bounds.width()) <= max(160, base.bounds.width() / 3)
+                }.sortedBy { it.bounds.top }.distinctBy { cleanOptionText(it.content).lowercase(Locale.ROOT) }.take(8)
+
+                if (columnRun.size in 2..8) {
+                    val score = columnRun.size * 100
+                    if (score > bestOptionScore) {
+                        bestOptionScore = score
+                        bestOptions = columnRun
+                    }
                 }
             }
         }
 
-        if (best.size < 2) return null
-        val firstOptionY = best.minOf { it.bounds.top }
+        // Strategy D: 2x2 grid alignment
+        if (bestOptions.size < 2) {
+            for (base in optionCandidates) {
+                val gridCandidates = optionCandidates.filter { n ->
+                    n.bounds.top >= base.bounds.top &&
+                        n.bounds.top - base.bounds.top <= 900 &&
+                        n.bounds.height() in 40..400
+                }.sortedWith(compareBy({ it.bounds.top }, { it.bounds.left })).take(6)
 
-        val questionNoise = listOf("daily use vocabulary", "learn english", "difficulty", "time left", "remove 50%", "quit level")
-        val qCandidates = nodes.filter { n ->
-            n.bounds.bottom <= firstOptionY && firstOptionY - n.bounds.bottom <= 720 && n.text.length >= 3 &&
-                questionNoise.none { bad -> norm(n.text).contains(bad) } &&
-                best.none { b -> b.bounds == n.bounds }
+                if (gridCandidates.size in 4..6) {
+                    bestOptions = gridCandidates
+                    bestOptionScore = 150
+                    break
+                }
+            }
         }
+
+        if (bestOptions.size < 2) return null
+
+        val firstOptionY = bestOptions.minOf { it.bounds.top }
+
+        // 2. Identify Question candidate (must sit above options)
+        val questionNoise = listOf(
+            "daily use vocabulary", "learn english", "difficulty", "time left", "remove 50%",
+            "quit level", "score", "coins", "level", "streak", "points", "timer"
+        )
+
+        val qCandidates = nodes.filter { n ->
+            val c = n.content
+            c.length >= 3 && n.bounds.bottom <= firstOptionY + 40 &&
+                questionNoise.none { bad -> norm(c).contains(bad) } &&
+                bestOptions.none { b -> b.bounds == n.bounds }
+        }
+
         if (qCandidates.isEmpty()) return null
 
         val qPick = qCandidates.maxByOrNull { n ->
-            val x = norm(n.text)
+            val text = n.content
+            val lower = norm(text)
             var score = 0
-            if (x.contains("?") || x.contains("___")) score += 300
-            if (x.endsWith("?") || x.endsWith(":")) score += 100
-            score += n.text.length
+            if (n.id.contains("question", true) || n.id.contains("prompt", true) || n.id.contains("quiz", true) || n.id.contains("title", true)) score += 500
+            if (lower.contains("?") || lower.contains("___")) score += 350
+            if (lower.endsWith("?") || lower.endsWith(":")) score += 200
+            if (lower.contains("which") || lower.contains("what") || lower.contains("where") || lower.contains("who") || lower.contains("how")) score += 150
+            if (lower.contains("correct") || lower.contains("opposite") || lower.contains("synonym") || lower.contains("antonym") || lower.contains("meaning")) score += 150
+            score += text.length.coerceAtMost(200)
             score
         } ?: return null
 
-        val question = qPick.text.trim()
-        val opts = best.sortedBy { it.bounds.top }.mapIndexed { i, n ->
-            QOpt(optionText(n.text), i, n.bounds)
+        val question = qPick.content.trim()
+        val opts = bestOptions.mapIndexed { i, n ->
+            QOpt(cleanOptionText(n.content).ifBlank { n.content.trim() }, i, n.bounds)
         }
+
         if (opts.size < 2) return null
 
         val fp = sha256(question + "|" + opts.joinToString("|") { it.text })
         if (fp == lastFp) return null
 
+        // Step-by-step UI logging
         AutomationState.lastQuestion = question
-        AutomationState.action = "Root: Solving question"
-        AutomationState.log("⚡ Root Question: ${question.take(100)}")
+        AutomationState.action = "Question Detected"
+        AutomationState.log("⚡ Question Detected: ${question.take(90)}")
+        AutomationState.log("⚡ Options: " + opts.joinToString(" | ") { "${('A'.code + it.index).toChar()}: ${it.text.take(30)}" })
 
         val idx = AnswerEngine.solve(context, QuizData(question, opts, fp))
         if (idx in opts.indices) {
             val chosen = opts[idx]
+            val cx = chosen.bounds.centerX()
+            val cy = chosen.bounds.centerY()
             AutomationState.lastAnswer = chosen.text
-            AutomationState.action = "Root: Answer ${idx + 1}"
-            AutomationState.log("⚡ Root Answer: ${chosen.text.take(80)}")
-            RootEngine.tap(chosen.bounds.centerX(), chosen.bounds.centerY())
+            AutomationState.action = "Clicking Option ${idx + 1}"
+            AutomationState.log("⚡ Clicking Option ${('A'.code + idx).toChar()}: '${chosen.text.take(40)}' at ($cx, $cy)")
+            RootEngine.tap(cx, cy)
             AutomationState.solved++
 
             // Progression check for next / submit buttons
             Thread {
                 try {
-                    Thread.sleep(250)
+                    Thread.sleep(300)
                     val nextXml = RootEngine.dumpScreenHierarchy()
                     val nextNodes = RootEngine.parseDumpXml(nextXml)
-                    val nextKeywords = setOf("submit", "submit answer", "next", "continue", "next question", "next level", "done", "check answer", "अगला", "जारी रखें")
+                    val nextKeywords = setOf(
+                        "submit", "submit answer", "next", "continue", "next question",
+                        "next level", "done", "check answer", "अगला", "जारी रखें", "आगे बढ़ें"
+                    )
                     for (n in nextNodes) {
-                        val t = norm(n.text)
+                        val t = norm(n.content)
                         if (t in nextKeywords || nextKeywords.any { k -> t.contains(k) && t.length <= 30 }) {
-                            RootEngine.tap(n.bounds.centerX(), n.bounds.centerY())
-                            AutomationState.log("⚡ Root Next/Submit clicked")
+                            val ncx = n.bounds.centerX()
+                            val ncy = n.bounds.centerY()
+                            RootEngine.tap(ncx, ncy)
+                            AutomationState.log("⚡ Auto-Clicked Progression button '${n.content}' at ($ncx, $ncy)")
                             break
                         }
                     }
@@ -583,7 +712,7 @@ object RootAutomationDaemon {
             return fp
         } else {
             AutomationState.failed++
-            AutomationState.log("⚡ Root: Answer not found")
+            AutomationState.log("⚡ Answer not found or solver timed out")
             return null
         }
     }

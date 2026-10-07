@@ -97,4 +97,34 @@ class ExampleRobolectricTest {
     AutomationState.stop()
     assertEquals("STOPPED", AutomationState.status)
   }
+
+  @Test
+  fun `test parseDumpXml extracts nodes and center coordinates correctly`() {
+    val sampleXml = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <hierarchy rotation="0">
+        <node index="0" text="" resource-id="" class="android.widget.FrameLayout" bounds="[0,0][1080,2400]" clickable="false">
+          <node index="0" text="What is 15 + 10?" resource-id="com.quiz:id/question_title" class="android.widget.TextView" bounds="[60,300][1020,500]" clickable="false" />
+          <node index="1" text="10" resource-id="com.quiz:id/option_a" class="android.widget.Button" bounds="[80,600][1000,740]" clickable="true" />
+          <node index="2" text="25" resource-id="com.quiz:id/option_b" class="android.widget.Button" bounds="[80,800][1000,940]" clickable="true" />
+          <node index="3" text="30" resource-id="com.quiz:id/option_c" class="android.widget.Button" bounds="[80,1000][1000,1140]" clickable="true" />
+          <node index="4" text="40" resource-id="com.quiz:id/option_d" class="android.widget.Button" bounds="[80,1200][1000,1340]" clickable="true" />
+        </node>
+      </hierarchy>
+    """.trimIndent()
+
+    val nodes = com.example.engine.RootEngine.parseDumpXml(sampleXml)
+    assertEquals(6, nodes.size)
+
+    val questionNode = nodes[1]
+    assertEquals("What is 15 + 10?", questionNode.content)
+    assertEquals(540, questionNode.centerX)
+    assertEquals(400, questionNode.centerY)
+
+    val optionB = nodes[3]
+    assertEquals("25", optionB.content)
+    assertEquals(540, optionB.centerX)
+    assertEquals(870, optionB.centerY)
+    assertTrue(optionB.clickable)
+  }
 }
