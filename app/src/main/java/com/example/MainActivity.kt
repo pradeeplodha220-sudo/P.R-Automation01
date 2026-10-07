@@ -460,6 +460,7 @@ fun RedAutomationMainScreen() {
                 Button(
                     onClick = {
                         val pkg = targetPackage.trim()
+                        OverlayService.minimize()
                         com.example.engine.RootEngine.start(context)
                         if (pkg.isNotBlank() && AutomationState.running) {
                             com.example.engine.RootEngine.launchTarget(context, pkg)

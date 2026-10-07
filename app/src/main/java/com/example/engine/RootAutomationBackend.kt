@@ -16,6 +16,8 @@ interface RootAutomationBackend {
     fun isRootAvailable(): Boolean
     fun dumpCurrentUi(): String
     fun performTap(x: Int, y: Int)
+    fun performSwipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int = 300)
     fun performBack()
+    fun typeText(text: String)
     fun launchTarget(context: Context, packageName: String): Boolean
 }

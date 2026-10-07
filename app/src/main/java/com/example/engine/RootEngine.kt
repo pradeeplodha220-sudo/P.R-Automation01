@@ -212,6 +212,33 @@ object RootEngine : RootAutomationBackend {
         }
     }
 
+    /**
+     * Simulates swipe via root command 'input swipe x1 y1 x2 y2 duration'
+     */
+    fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int = 300) {
+        executor.execute {
+            try {
+                Runtime.getRuntime().exec(arrayOf("su", "-c", "input swipe $x1 $y1 $x2 $y2 $durationMs"))
+            } catch (t: Throwable) {
+                Log.e(TAG, "Root swipe failed from ($x1,$y1) to ($x2,$y2)", t)
+            }
+        }
+    }
+
+    /**
+     * Types text using root command 'input text'
+     */
+    fun type(text: String) {
+        val sanitized = text.replace(" ", "%s").replace("\"", "\\\"")
+        executor.execute {
+            try {
+                Runtime.getRuntime().exec(arrayOf("su", "-c", "input text \"$sanitized\""))
+            } catch (t: Throwable) {
+                Log.e(TAG, "Root typeText failed for: $text", t)
+            }
+        }
+    }
+
     // RootAutomationBackend interface implementation
     override fun start(context: Context) {
         if (!isRootAvailable()) {
@@ -261,6 +288,10 @@ object RootEngine : RootAutomationBackend {
         tap(x, y)
     }
 
+    override fun performSwipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int) {
+        swipe(x1, y1, x2, y2, durationMs)
+    }
+
     override fun performBack() {
         executor.execute {
             try {
@@ -269,6 +300,10 @@ object RootEngine : RootAutomationBackend {
                 Log.e(TAG, "Root keyevent BACK failed", t)
             }
         }
+    }
+
+    override fun typeText(text: String) {
+        type(text)
     }
 
     override fun launchTarget(context: Context, packageName: String): Boolean {

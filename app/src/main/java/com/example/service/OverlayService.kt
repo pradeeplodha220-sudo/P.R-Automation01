@@ -35,6 +35,13 @@ class OverlayService : Service() {
         @Volatile var active = false
         @Volatile var isPanelOpen = false
         @Volatile var overlayBounds: List<Rect> = emptyList()
+        @Volatile private var instance: OverlayService? = null
+
+        fun minimize() {
+            instance?.let { s ->
+                s.handler.post { s.hidePanel() }
+            }
+        }
 
         fun isTouchInsideOverlay(x: Int, y: Int): Boolean {
             if (!active) return false
@@ -67,6 +74,7 @@ class OverlayService : Service() {
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
         runCatching { startForeground(4101, buildNotification()) }
+        instance = this
         active = true
         showBubble()
     }
@@ -323,6 +331,7 @@ class OverlayService : Service() {
         bubble?.let { runCatching { wm.removeView(it) } }
         bubble = null
         active = false
+        instance = null
         overlayBounds = emptyList()
         super.onDestroy()
     }
