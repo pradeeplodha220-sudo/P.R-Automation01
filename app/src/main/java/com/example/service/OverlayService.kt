@@ -127,13 +127,13 @@ class OverlayService : Service() {
         bubbleParams?.let { bp ->
             val bw = bubble?.width?.takeIf { it > 0 } ?: dp(48)
             val bh = bubble?.height?.takeIf { it > 0 } ?: dp(48)
-            list.add(Rect(bp.x - dp(12), bp.y - dp(12), bp.x + bw + dp(12), bp.y + bh + dp(12)))
+            list.add(Rect(bp.x, bp.y, bp.x + bw, bp.y + bh))
         }
         if (isPanelOpen) {
             panelParams?.let { pp ->
                 val pw = panel?.width?.takeIf { it > 0 } ?: dp(290)
                 val ph = panel?.height?.takeIf { it > 0 } ?: dp(320)
-                list.add(Rect(pp.x - dp(14), pp.y - dp(14), pp.x + pw + dp(14), pp.y + ph + dp(14)))
+                list.add(Rect(pp.x, pp.y, pp.x + pw, pp.y + ph))
             }
         }
         overlayBounds = list
@@ -270,6 +270,7 @@ class OverlayService : Service() {
 
         add("▶ START", Color.rgb(215, 0, 35), Color.rgb(140, 0, 20)) {
             com.example.engine.RootEngine.start(this)
+            hidePanel()
         }
         add("⏸ PAUSE", Color.rgb(170, 70, 0), Color.rgb(110, 45, 0)) { com.example.engine.RootEngine.pause() }
         add("▶ RESUME", Color.rgb(200, 25, 45), Color.rgb(120, 10, 25)) {

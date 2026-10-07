@@ -127,4 +127,23 @@ class ExampleRobolectricTest {
     assertEquals(870, optionB.centerY)
     assertTrue(optionB.clickable)
   }
+
+  @Test
+  fun `test parseDumpXml identifies progression button for State B`() {
+    val resultXml = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <hierarchy rotation="0">
+        <node index="0" text="" resource-id="" class="android.widget.FrameLayout" bounds="[0,0][1080,2400]" clickable="false">
+          <node index="0" text="Correct! +10 Points" resource-id="com.quiz:id/result_label" class="android.widget.TextView" bounds="[100,500][980,650]" clickable="false" />
+          <node index="1" text="Next Question" resource-id="com.quiz:id/btn_next" class="android.widget.Button" bounds="[140,1600][940,1750]" clickable="true" />
+        </node>
+      </hierarchy>
+    """.trimIndent()
+
+    val nodes = com.example.engine.RootEngine.parseDumpXml(resultXml)
+    val nextBtn = nodes.find { it.content.equals("Next Question", ignoreCase = true) }
+    org.junit.Assert.assertNotNull(nextBtn)
+    assertEquals(540, nextBtn!!.centerX)
+    assertEquals(1675, nextBtn.centerY)
+  }
 }

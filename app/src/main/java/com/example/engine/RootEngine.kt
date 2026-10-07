@@ -24,6 +24,7 @@ data class RootUiNode(
     val bounds: Rect,
     val clickable: Boolean,
     val className: String = "",
+    val packageName: String = "",
     val checkable: Boolean = false,
     val checked: Boolean = false,
     val enabled: Boolean = true
@@ -145,11 +146,11 @@ object RootEngine : RootAutomationBackend {
     }
 
     /**
-     * Retrieves the current foreground package name using fast shell queries with short caching.
+     * Retrieves the current foreground package name using fast shell queries with caching.
      */
     fun getForegroundPackage(forceRefresh: Boolean = false): String {
         val now = System.currentTimeMillis()
-        if (!forceRefresh && (now - lastFgCheckTime) < 1000L && cachedFgPackage.isNotBlank()) {
+        if (!forceRefresh && (now - lastFgCheckTime) < 1200L && cachedFgPackage.isNotBlank()) {
             return cachedFgPackage
         }
         val out = executeSuWithOutput("dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' || dumpsys activity activities 2>/dev/null | grep -E 'mResumedActivity|topResumedActivity'")
@@ -197,6 +198,7 @@ object RootEngine : RootAutomationBackend {
                     val desc = parser.getAttributeValue(null, "content-desc") ?: ""
                     val id = parser.getAttributeValue(null, "resource-id") ?: ""
                     val cls = parser.getAttributeValue(null, "class") ?: ""
+                    val pkg = parser.getAttributeValue(null, "package") ?: ""
                     val boundsStr = parser.getAttributeValue(null, "bounds") ?: ""
                     val clickable = parser.getAttributeValue(null, "clickable") == "true"
                     val checkable = parser.getAttributeValue(null, "checkable") == "true"
@@ -205,7 +207,7 @@ object RootEngine : RootAutomationBackend {
 
                     val rect = parseBounds(boundsStr)
                     if (rect != null && rect.width() > 0 && rect.height() > 0) {
-                        list.add(RootUiNode(text, desc, id, rect, clickable, cls, checkable, checked, enabled))
+                        list.add(RootUiNode(text, desc, id, rect, clickable, cls, pkg, checkable, checked, enabled))
                     }
                 }
                 eventType = parser.next()
@@ -397,36 +399,16 @@ object RootAutomationDaemon {
                         Thread.sleep(400)
                         continue
                     }
-                    val target = AutomationState.target(context).trim()
-                    val fg = RootEngine.getForegroundPackage()
-
-                    // If a target package is configured, check if we are in or targeting that package
-                    if (target.isNotBlank() && fg.isNotBlank()) {
-                        val inTarget = fg.contains(target, ignoreCase = true) || target.contains(fg, ignoreCase = true)
-                        if (!inTarget) {
-                            val now = System.currentTimeMillis()
-                            if (now - lastStatusLogTime > 4000L) {
-                                AutomationState.log("Waiting for target app '$target' (Current foreground: '$fg')")
-                                lastStatusLogTime = now
-                            }
-                            Thread.sleep(500)
-                            continue
-                        }
-                    }
 
                     // Dump screen XML
                     val xml = RootEngine.dumpScreenHierarchy()
                     if (xml.isBlank() || (!xml.contains("<hierarchy") && !xml.contains("<?xml"))) {
                         consecutiveDumpFailures++
-                        if (consecutiveDumpFailures == 1 || consecutiveDumpFailures % 4 == 0) {
+                        if (consecutiveDumpFailures == 1 || consecutiveDumpFailures % 5 == 0) {
                             AutomationState.log("UI Dump waiting for screen layout (#$consecutiveDumpFailures)...")
                         }
-                        if (consecutiveDumpFailures >= 10) {
-                            AutomationState.setTargetUiUnavailable("Target UI hierarchy cannot be dumped by root backend")
-                            isRunning = false
-                            break
-                        }
-                        Thread.sleep(350)
+                        // Non-blocking retry: do not terminate the loop on temporary UI dump delay
+                        Thread.sleep(450)
                         continue
                     }
                     consecutiveDumpFailures = 0
@@ -435,6 +417,23 @@ object RootAutomationDaemon {
                     if (nodes.isEmpty()) {
                         Thread.sleep(300)
                         continue
+                    }
+
+                    // Target check (NON-BLOCKING):
+                    // If target package is set, check if the XML nodes belong to target or if quiz nodes are present
+                    val target = AutomationState.target(context).trim()
+                    if (target.isNotBlank()) {
+                        val hasTargetNode = nodes.any { it.packageName.contains(target, ignoreCase = true) }
+                        if (!hasTargetNode) {
+                            val activePkgs = nodes.map { it.packageName }.filter { it.isNotBlank() }.distinct().take(3)
+                            val now = System.currentTimeMillis()
+                            if (now - lastStatusLogTime > 4000L) {
+                                AutomationState.log("Target '$target' not in current dump (Present: ${activePkgs.joinToString()}). Continuing scan...")
+                                lastStatusLogTime = now
+                            }
+                            Thread.sleep(500)
+                            continue
+                        }
                     }
 
                     // Policy check: If target application explicitly reports automation restriction,
@@ -461,18 +460,24 @@ object RootAutomationDaemon {
                         continue
                     }
 
-                    // 2. Check for Quiz Question & Options
+                    // 2. State B: Check for Result / "Next" / "Submit" / "Continue" Progression Screens
+                    if (handleProgressionOrNext(nodes)) {
+                        Thread.sleep(600)
+                        continue
+                    }
+
+                    // 3. State A: Check for Active Quiz Question & Options
                     val now = System.currentTimeMillis()
-                    if (now - lastSolvedAt > 600) {
+                    if (now - lastSolvedAt > 500) {
                         val solved = handleQuizSolving(context, nodes, lastSolvedFp)
                         if (solved != null) {
                             lastSolvedFp = solved
                             lastSolvedAt = System.currentTimeMillis()
-                            Thread.sleep(1000)
+                            Thread.sleep(700)
                             continue
                         } else {
                             if (now - lastStatusLogTime > 4000L) {
-                                AutomationState.log("Scanning screen: ${nodes.size} UI elements, searching for question...")
+                                AutomationState.log("Scanning screen: ${nodes.size} UI elements, analyzing quiz layout...")
                                 lastStatusLogTime = now
                             }
                         }
@@ -539,6 +544,53 @@ object RootAutomationDaemon {
         return false
     }
 
+    /**
+     * State B: Auto-detects and taps "Next", "Submit", "Continue", or result advance buttons.
+     */
+    private fun handleProgressionOrNext(nodes: List<RootUiNode>): Boolean {
+        fun norm(s: String) = s.trim().lowercase(Locale.ROOT).replace(Regex("\\s+"), " ")
+
+        val progressionWords = setOf(
+            "next", "next question", "continue", "submit", "submit answer", "check answer",
+            "check", "done", "next level", "play next", "proceed", "claim", "collect",
+            "got it", "ok", "okay", "try again", "play again", "replay", "next quiz",
+            "अगला", "जारी रखें", "आगे बढ़ें", "उत्तर दें", "सही उत्तर", "पुष्टि करें"
+        )
+
+        for (n in nodes) {
+            val content = n.content.trim()
+            val lower = norm(content)
+            if (lower.isBlank() || lower.length > 30) continue
+
+            val id = n.id.lowercase(Locale.ROOT)
+            val isProgressionId = id.contains("btn_next") || id.contains("button_next") ||
+                id.contains("btn_continue") || id.contains("btn_submit") ||
+                id.contains("action_next") || id.contains("next_btn")
+
+            val isProgressionText = lower in progressionWords || progressionWords.any { kw ->
+                lower == kw || (lower.startsWith(kw) && lower.length <= kw.length + 5)
+            }
+
+            if (isProgressionId || isProgressionText) {
+                // Ensure it's not an option letter choice like "A) ..."
+                if (Regex("^(?:[A-Ha-h]|\\d{1,2})\\s*[.)\\]:-]").containsMatchIn(content)) continue
+
+                val cx = n.centerX
+                val cy = n.centerY
+                if (!OverlayService.isTouchInsideOverlay(cx, cy)) {
+                    AutomationState.action = "State B: Next Question"
+                    AutomationState.log("⚡ State B: Auto-Clicked Progression button '$content' at ($cx, $cy)")
+                    RootEngine.tap(cx, cy)
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    /**
+     * State A: Detects active quiz question and options, calculates answer, and injects tap.
+     */
     private fun handleQuizSolving(context: Context, nodes: List<RootUiNode>, lastFp: String): String? {
         fun norm(s: String) = s.trim().lowercase(Locale.ROOT).replace(Regex("\\s+"), " ")
         fun cleanOptionText(s: String) = s.replace(Regex("^\\s*(?:[A-Ha-h]|\\d{1,2})\\s*[.)\\]:-]\\s*"), "").trim()
@@ -671,8 +723,8 @@ object RootAutomationDaemon {
 
         // Step-by-step UI logging
         AutomationState.lastQuestion = question
-        AutomationState.action = "Question Detected"
-        AutomationState.log("⚡ Question Detected: ${question.take(90)}")
+        AutomationState.action = "State A: Question Detected"
+        AutomationState.log("⚡ State A: Question Detected: ${question.take(90)}")
         AutomationState.log("⚡ Options: " + opts.joinToString(" | ") { "${('A'.code + it.index).toChar()}: ${it.text.take(30)}" })
 
         val idx = AnswerEngine.solve(context, QuizData(question, opts, fp))
@@ -681,8 +733,8 @@ object RootAutomationDaemon {
             val cx = chosen.bounds.centerX()
             val cy = chosen.bounds.centerY()
             AutomationState.lastAnswer = chosen.text
-            AutomationState.action = "Clicking Option ${idx + 1}"
-            AutomationState.log("⚡ Clicking Option ${('A'.code + idx).toChar()}: '${chosen.text.take(40)}' at ($cx, $cy)")
+            AutomationState.action = "State A: Clicking Option ${idx + 1}"
+            AutomationState.log("⚡ State A: Clicking Option ${('A'.code + idx).toChar()}: '${chosen.text.take(40)}' at ($cx, $cy)")
             RootEngine.tap(cx, cy)
             AutomationState.solved++
 
